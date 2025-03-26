@@ -1,0 +1,12 @@
+{
+  "enara-prettier-format-version": "1.0",
+  "alignObjectProperties": true,
+  "arrayExpand": true,
+  "arrowParens": "always",
+  "jsxBracketSameLine": true,
+  "jsxSingleQuote": true,
+  "printWidth": 100,
+  "singleQuote": true,
+  "tabWidth": 2,
+  "trailingComma": "all"
+}

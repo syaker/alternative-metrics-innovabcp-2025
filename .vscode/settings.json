@@ -1,0 +1,32 @@
+{
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  "[postgres]": {
+    "editor.defaultFormatter": "bradymholt.pgformatter"
+  },
+  "[sql]": {
+    "editor.defaultFormatter": "bradymholt.pgformatter"
+  },
+  "[prisma]": {
+    "editor.defaultFormatter": "Prisma.prisma"
+  },
+  "cSpell.words": [
+    "autoincrement",
+    "bullmq",
+    "Casl",
+    "Enara",
+    "luxon",
+    "memjs",
+    "NEWRELIC",
+    "pkey",
+    "subresource",
+    "uuidv"
+  ],
+  "[dotenv]": {
+    "editor.defaultFormatter": "foxundermoon.shell-format"
+  }
+}
