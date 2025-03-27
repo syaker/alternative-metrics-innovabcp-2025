@@ -28,12 +28,15 @@
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
     "@prisma/client": "6.5.0",
+    "class-validator": "^0.14.1",
     "dotenv": "^16.4.7",
     "dotenv-cli": "^8.0.0",
+    "luxon": "^3.6.0",
     "prisma": "^6.5.0",
     "prisma-json-types-generator": "^3.2.2",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "simple-git": "^3.27.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
