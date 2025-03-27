@@ -74,6 +74,12 @@ enum Gender {
     OTHER
 }
 
+enum CreditType {
+    MORTGAGE
+    VEHICLE
+    PERSONAL
+}
+
 model User {
     id           Int          @id @default(autoincrement())
     name         String       @map("name")
@@ -122,21 +128,21 @@ model RecommendationCreditEvaluation {
 }
 
 model CreditEvaluation {
-    id                Int                      @id @default(autoincrement())
-    category          CreditEvaluationCategory @map("category")
-    evaluationDate    DateTime                 @default(now())
-    score             Float                    @map("score")
-    riskLevel         RiskLevel                @map("risk_level")
-    status            CreditEvaluationStatus   @map("status")
-    totalTransactions Int                      @map("total_transactions")
-    totalIncome       Decimal                  @map("total_income")
-    totalExpenses     Decimal                  @map("total_expenses")
-    avgMonthlyIncome  Decimal                  @map("avg_monthly_income")
-    avgMonthlyExpense Decimal                  @map("avg_monthly_expense")
-    debtRatio         Float                    @map("debt_ratio")
-    reliabilityScore  Float                    @map("reliability_score")
-    metadata          Json?                    @map("metadata")
-    userId            Int                      @map("user_id")
+    id                Int                    @id @default(autoincrement())
+    evaluationDate    DateTime               @default(now())
+    creditType        CreditType             @map("credit_type")
+    score             Float                  @map("score")
+    riskLevel         RiskLevel              @map("risk_level")
+    status            CreditEvaluationStatus @map("status")
+    totalTransactions Int                    @map("total_transactions")
+    totalIncome       Decimal                @map("total_income")
+    totalExpenses     Decimal                @map("total_expenses")
+    avgMonthlyIncome  Decimal                @map("avg_monthly_income")
+    avgMonthlyExpense Decimal                @map("avg_monthly_expense")
+    debtRatio         Float                  @map("debt_ratio")
+    reliabilityScore  Float                  @map("reliability_score")
+    metadata          Json?                  @map("metadata")
+    userId            Int                    @map("user_id")
 
     user                            User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
     recommendationCreditEvaluations RecommendationCreditEvaluation[]

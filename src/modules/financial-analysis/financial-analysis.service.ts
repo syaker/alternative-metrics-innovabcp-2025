@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   CreditEvaluationCategory,
+  CreditEvaluationStatus,
+  CreditType,
   ExpenseType,
   Gender,
+  RiskLevel,
   TransactionType,
   User,
 } from '@prisma/client';
@@ -10,13 +13,19 @@ import { DateTime } from 'luxon';
 import { YEAR_IN_MILLISECONDS } from '../../constants/numbers';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-new-profile.dto';
+import { EvaluationAnalysisReport } from './financial-analysis.type';
 import {
+  HIGH_RISK_THRESHOLD,
+  MEDIUM_RISK_THRESHOLD,
   MIN_EXPENSES_BY_PAYMENT_TYPE,
   MIN_TRANSACTIONS_SINCE_LAST_EVALUATION,
+  MORTGAGE_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD,
+  PERSONAL_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD,
   RE_COMPUTE_ELIGIBILITY_PERIOD_IN_MS,
   RECEIPT_WEIGHTS,
   SCORE_BY_CATEGORY,
   TRANSACTION_EVALUATION_PERIOD_MONTHS,
+  VEHICLE_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD,
 } from './rules/scoring-rules';
 
 @Injectable()
@@ -25,7 +34,7 @@ export class FinancialAnalysisService {
 
   constructor(private prismaService: PrismaService) {}
 
-  async calculateScoreByUser(userId: number) {
+  async calculateScoreByUser(userId: number, creditType: CreditType) {
     // 1. Get user to calculate score
     const user = await this.prismaService.user.findFirstOrThrow({
       where: {
@@ -50,17 +59,53 @@ export class FinancialAnalysisService {
 
     // 4. If their last evaluation was done more than the allowed period ago
     if (lastCreditEvaluation && this.metWithTimeToReevaluate(lastCreditEvaluation.evaluationDate)) {
-      const diffInDays = DateTime.fromISO(lastCreditEvaluation.evaluationDate).diff(
-        DateTime.fromISO(this.allowedTimeToReevaluateStartDate()),
+      const diffInDays = DateTime.fromISO(String(lastCreditEvaluation.evaluationDate)).diff(
+        DateTime.fromISO(this.allowedTimeToReevaluateStartDate().toISOString()),
         'days',
       ).days;
 
       // Return a message indicating that it's too early to reevaluate, try in X days
-      return { earlyUntil: diffInDays };
+      return { reason: `Please review your evaluation in ${diffInDays} more` };
     }
 
     // 6. Proceed to evaluate
-    await this.evaluateCreditByUser(user);
+    const report = await this.evaluateCreditByUser(user, creditType);
+
+    if (!report) {
+      return { reason: 'Too few transactions until now' };
+    }
+
+    const {
+      score,
+      reliabilityScore,
+      riskLevel,
+      status,
+      avgMonthlyExpense,
+      avgMonthlyIncome,
+      totalTransactionExpensesAmount,
+      totalTransactionIncomingAmount,
+      totalTransactions,
+      debtRatio,
+    } = report.transactionsReport;
+
+    await this.prismaService.creditEvaluation.create({
+      data: {
+        creditType: CreditType.MORTGAGE,
+        riskLevel,
+        score,
+        status,
+        avgMonthlyExpense,
+        avgMonthlyIncome,
+        totalTransactions,
+        totalExpenses: totalTransactionExpensesAmount,
+        totalIncome: totalTransactionIncomingAmount,
+        debtRatio,
+        reliabilityScore,
+        userId: report.userId,
+      },
+    });
+
+    return report;
   }
 
   allowedTimeToReevaluateStartDate() {
@@ -74,29 +119,16 @@ export class FinancialAnalysisService {
     );
   }
 
-  async evaluateCreditByUser(user: User) {
-    const lastCreditEvaluation = await this.prismaService.creditEvaluation.findFirst({
-      where: {
-        userId: user.id,
-      },
-      orderBy: {
-        evaluationDate: 'desc',
-      },
-    });
-
-    // If is greater than now - 1 week proceed to reevaluate, instead NO proceed with evaluation
-    if (
-      lastCreditEvaluation &&
-      !this.metWithTimeToReevaluate(lastCreditEvaluation.evaluationDate)
-    ) {
-      return;
-    }
-
+  async evaluateCreditByUser(
+    user: User,
+    creditType: CreditType,
+  ): Promise<EvaluationAnalysisReport | null> {
     // Obtain all transactions made from 3 months ago
     const transactions = await this.prismaService.transaction.findMany({
       where: {
         userId: user.id,
         createdAt: {
+          // We consider 3 months of transactions to consider it valid
           gte: new Date(new Date().getTime() - TRANSACTION_EVALUATION_PERIOD_MONTHS),
         },
       },
@@ -110,7 +142,7 @@ export class FinancialAnalysisService {
       transactions.length > MIN_TRANSACTIONS_SINCE_LAST_EVALUATION;
 
     if (!hasMinimumTransactionsToProceed) {
-      return;
+      return null;
     }
 
     // Sum receipts by category
@@ -214,27 +246,92 @@ export class FinancialAnalysisService {
     // We get the first one since we're ordering by 'desc'
     const lastTransaction = transactions.slice(-1)[0];
 
-    const firstReceiptDate = lastTransaction.createdAt;
+    // -- Score by category --
+    const residenceAgeScore = this.calculateResidenceAgeScore(lastTransaction.createdAt);
+    const employmentStabilityScore = this.calculateEmploymentStabilityScore(
+      lastTransaction.createdAt,
+    );
+    const bankTransactionsScore = transactions.length * SCORE_BY_CATEGORY.BANK_TRANSACTIONS;
+    const reliabilityScore =
+      (billPaymentScore + residenceAgeScore + employmentStabilityScore + bankTransactionsScore) / 4;
 
-    const residenceAgeScore = this.calculateResidenceAgeScore(firstReceiptDate);
+    // -- Historical Report --
+    // Based on how close are the scores by category to ideal
+    const score =
+      (billPaymentScore + residenceAgeScore + employmentStabilityScore + bankTransactionsScore) *
+      100;
+    const avgMonthlyIncome = totalTransactionIncomingAmount / TRANSACTION_EVALUATION_PERIOD_MONTHS;
+    const avgMonthlyExpense = totalTransactionExpensesAmount / TRANSACTION_EVALUATION_PERIOD_MONTHS;
+    const riskLevel = this.calculateRiskLevel(score);
+    const debtRatio =
+      totalTransactionIncomingAmount > 0
+        ? totalTransactionExpensesAmount / totalTransactionIncomingAmount
+        : 1;
+    // Depends on the type of credit
+    const status = this.metScoreWithCreditType(creditType, score)
+      ? CreditEvaluationStatus.APPROVED
+      : CreditEvaluationStatus.REJECTED;
 
-    const firstSalaryDate = lastTransaction.createdAt;
-
-    const employmentStabilityScore = this.calculateEmploymentStabilityScore(firstSalaryDate);
+    const totalTransactions = transactions.length;
 
     // TODO: Evaluate social media
-
-    const evaluation = {
-      bankTransactions: transactions.length * SCORE_BY_CATEGORY.BANK_TRANSACTIONS,
-      billPayment: billPaymentScore,
-      residenceAge: residenceAgeScore,
-      socialMedia: 0,
-      stabilityEmployment: employmentStabilityScore,
-    };
-
     // TODO: Evaluate from 0 to 1000 based on how much close are values to ideal
+    return {
+      userId: user.id,
+      creditType,
+      scoreByCategory: {
+        bankTransactions: bankTransactionsScore,
+        billPayment: billPaymentScore,
+        residenceAge: residenceAgeScore,
+        socialMedia: 0,
+        stabilityEmployment: employmentStabilityScore,
+      },
+      transactionsReport: {
+        totalResidenceMonths,
+        totalSalaryAmount,
+        totalSalaryPayments,
+        totalTransactionExpensesAmount,
+        totalTransactionIncomingAmount,
+        avgMonthlyIncome,
+        avgMonthlyExpense,
+        totalTransactions,
+        status,
+        score,
+        riskLevel,
+        debtRatio,
+        reliabilityScore,
+      },
+    };
+  }
 
-    return evaluation;
+  calculateRiskLevel(score: number) {
+    let riskLevel: RiskLevel;
+
+    if (score < HIGH_RISK_THRESHOLD) {
+      riskLevel = RiskLevel.HIGH;
+    } else if (score < MEDIUM_RISK_THRESHOLD) {
+      riskLevel = RiskLevel.MEDIUM;
+    } else {
+      riskLevel = RiskLevel.LOW;
+    }
+
+    return riskLevel;
+  }
+
+  metScoreWithCreditType(creditType: CreditType, score: number) {
+    switch (creditType) {
+      case CreditType.MORTGAGE:
+        return score > MORTGAGE_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD || false;
+
+      case CreditType.PERSONAL:
+        return score > PERSONAL_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD || false;
+
+      case CreditType.VEHICLE:
+        return score > VEHICLE_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD || false;
+
+      default:
+        return false;
+    }
   }
 
   calculateResidenceAgeScore(firstReceiptDate: Date): number {

@@ -43,3 +43,12 @@ export const RECEIPT_WEIGHTS = {
 
 // Period to re-collect data again
 export const TRANSACTION_EVALUATION_PERIOD_MONTHS = 3;
+
+// Risk
+export const HIGH_RISK_THRESHOLD = 40;
+export const MEDIUM_RISK_THRESHOLD = 60;
+
+// Score by credit
+export const MORTGAGE_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD = 90;
+export const PERSONAL_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD = 70;
+export const VEHICLE_MIN_SCORE_BY_CREDIT_TYPE_THRESHOLD = 60;
