@@ -49,14 +49,41 @@ enum CreditEvaluationCategory {
     BANK_TRANSACTIONS
 }
 
+enum ExpenseType {
+    RENT
+    WATER
+    ELECTRICITY
+    TELEPHONY
+    INTERNET
+    COLLEGE
+    CERTIFICATIONS
+    UNIVERSITY
+    ONLINE_SHOPPING
+    SALARY
+}
+
+enum DocumentType {
+    DNI
+    PASSPORT
+    CE
+}
+
+enum Gender {
+    FEMALE
+    MALE
+    OTHER
+}
+
 model User {
-    id        Int     @id @default(autoincrement())
-    name      Int     @map("name")
-    phone     String  @map("phone")
-    email     String  @map("email")
-    age       String  @map("age")
-    gender    String  @map("category")
-    hasFamily Boolean @map("has_family")
+    id           Int          @id @default(autoincrement())
+    name         String       @map("name")
+    phone        String       @map("phone")
+    email        String       @map("email")
+    age          String?      @map("age")
+    document     String       @map("document")
+    documentType DocumentType @map("document_type")
+    gender       Gender       @map("gender")
+    hasFamily    Boolean      @default(false) @map("has_family")
 
     createdAt                       DateTime                         @default(now()) @db.Timestamp()
     updatedAt                       DateTime                         @updatedAt @db.Timestamp()
@@ -123,10 +150,10 @@ model CreditEvaluation {
 
 model Transaction {
     id              Int                      @id @default(autoincrement())
-    amount          String                   @map("amount")
+    amount          Int                      @map("amount")
     currency        TransactionCurrency      @map("currency")
     transactionType TransactionType          @map("transaction_type")
-    category        String                   @map("category")
+    category        ExpenseType              @map("category")
     merchantName    String                   @map("merchant_name")
     paymentMethod   TransactionPaymentMethod @map("payment_method")
     source          String                   @map("source")
