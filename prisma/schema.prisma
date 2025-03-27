@@ -11,3 +11,134 @@ datasource db {
     provider = "postgresql"
     url      = env("POSTGRESQL_DB_URL")
 }
+
+enum TransactionCurrency {
+    PEN
+    USD
+}
+
+enum TransactionType {
+    INCOME
+    EXPENSE
+}
+
+enum TransactionPaymentMethod {
+    CREDIT_CARD
+    DEBIT_CARD
+    CASH
+    TRANSFER
+}
+
+enum RiskLevel {
+    LOW
+    MEDIUM
+    HIGH
+}
+
+enum CreditEvaluationStatus {
+    APPROVED
+    REJECTED
+    PENDING
+}
+
+enum CreditEvaluationCategory {
+    STABILITY_EMPLOYMENT
+    SOCIAL_MEDIA
+    RESIDENCE_AGE
+    BILL_PAYMENT
+    BANK_TRANSACTIONS
+}
+
+model User {
+    id        Int     @id @default(autoincrement())
+    name      Int     @map("name")
+    phone     String  @map("phone")
+    email     String  @map("email")
+    age       String  @map("age")
+    gender    String  @map("category")
+    hasFamily Boolean @map("has_family")
+
+    createdAt                       DateTime                         @default(now()) @db.Timestamp()
+    updatedAt                       DateTime                         @updatedAt @db.Timestamp()
+    creditEvaluations               CreditEvaluation[]
+    recommendationCreditEvaluations RecommendationCreditEvaluation[]
+    transactions                    Transaction[]
+
+    @@map("users")
+}
+
+model Recommendations {
+    id Int @id @default(autoincrement())
+
+    text     String                   @map("text")
+    category CreditEvaluationCategory @map("category")
+
+    createdAt DateTime @default(now()) @db.Timestamp()
+    updatedAt DateTime @updatedAt @db.Timestamp()
+
+    @@map("recommendations")
+}
+
+model RecommendationCreditEvaluation {
+    id Int @id @default(autoincrement())
+
+    recommendationId   Int @map("recommendation_id")
+    creditEvaluationId Int @map("credit_evaluation_id")
+
+    recommendation   User             @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+    creditEvaluation CreditEvaluation @relation(fields: [creditEvaluationId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now()) @db.Timestamp()
+    updatedAt DateTime @updatedAt @db.Timestamp()
+
+    @@map("recommendation_credit_evaluations")
+}
+
+model CreditEvaluation {
+    id                Int                      @id @default(autoincrement())
+    category          CreditEvaluationCategory @map("category")
+    evaluationDate    DateTime                 @default(now())
+    score             Float                    @map("score")
+    riskLevel         RiskLevel                @map("risk_level")
+    status            CreditEvaluationStatus   @map("status")
+    totalTransactions Int                      @map("total_transactions")
+    totalIncome       Decimal                  @map("total_income")
+    totalExpenses     Decimal                  @map("total_expenses")
+    avgMonthlyIncome  Decimal                  @map("avg_monthly_income")
+    avgMonthlyExpense Decimal                  @map("avg_monthly_expense")
+    debtRatio         Float                    @map("debt_ratio")
+    reliabilityScore  Float                    @map("reliability_score")
+    metadata          Json?                    @map("metadata")
+    userId            Int                      @map("user_id")
+
+    user                            User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+    recommendationCreditEvaluations RecommendationCreditEvaluation[]
+
+    createdAt DateTime @default(now()) @db.Timestamp()
+    updatedAt DateTime @updatedAt @db.Timestamp()
+
+    @@index([userId, evaluationDate])
+    @@map("credit_evaluations")
+}
+
+model Transaction {
+    id              Int                      @id @default(autoincrement())
+    amount          String                   @map("amount")
+    currency        TransactionCurrency      @map("currency")
+    transactionType TransactionType          @map("transaction_type")
+    category        String                   @map("category")
+    merchantName    String                   @map("merchant_name")
+    paymentMethod   TransactionPaymentMethod @map("payment_method")
+    source          String                   @map("source")
+    location        Json                     @map("location")
+    metadata        Json                     @map("metadata")
+    invoiceNumber   String                   @map("invoice_number")
+    userId          Int                      @map("user_id")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now()) @db.Timestamp()
+    updatedAt DateTime @updatedAt @db.Timestamp()
+
+    @@map("transactions")
+}
