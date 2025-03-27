@@ -14,7 +14,7 @@
   "[prisma]": {
     "editor.defaultFormatter": "Prisma.prisma"
   },
-  "cSpell.words": ["autoincrement", "LOOKBACK", "luxon", "Yape"],
+  "cSpell.words": ["autoincrement", "innovabcp", "LOOKBACK", "luxon", "Yape"],
   "[dotenv]": {
     "editor.defaultFormatter": "foxundermoon.shell-format"
   }

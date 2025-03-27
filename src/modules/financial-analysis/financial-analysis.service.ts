@@ -223,6 +223,7 @@ export class FinancialAnalysisService {
     const employmentStabilityScore = this.calculateEmploymentStabilityScore(firstSalaryDate);
 
     // TODO: Evaluate social media
+
     const evaluation = {
       bankTransactions: transactions.length * SCORE_BY_CATEGORY.BANK_TRANSACTIONS,
       billPayment: billPaymentScore,
@@ -230,6 +231,8 @@ export class FinancialAnalysisService {
       socialMedia: 0,
       stabilityEmployment: employmentStabilityScore,
     };
+
+    // TODO: Evaluate from 0 to 1000 based on how much close are values to ideal
 
     return evaluation;
   }
