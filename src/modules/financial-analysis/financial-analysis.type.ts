@@ -1,4 +1,12 @@
-import { CreditEvaluationStatus, CreditType, RiskLevel } from '@prisma/client';
+import {
+  CreditEvaluationStatus,
+  CreditType,
+  ExpenseType,
+  RiskLevel,
+  TransactionCurrency,
+  TransactionPaymentMethod,
+  TransactionType,
+} from '@prisma/client';
 
 export interface EvaluationAnalysisReport {
   userId: number;
@@ -26,3 +34,17 @@ export interface EvaluationAnalysisReport {
     reliabilityScore: number;
   };
 }
+
+export type TransactionParams = {
+  amount: number;
+  currency: TransactionCurrency;
+  transactionType: TransactionType;
+  category: ExpenseType;
+  merchantName: string;
+  paymentMethod: TransactionPaymentMethod;
+  source: string;
+  location: {};
+  metadata: {};
+  invoiceNumber: string;
+  userId: number;
+};

@@ -6,14 +6,22 @@ import {
   ExpenseType,
   Gender,
   RiskLevel,
+  Transaction,
   TransactionType,
   User,
 } from '@prisma/client';
 import { DateTime } from 'luxon';
-import { YEAR_IN_MILLISECONDS } from '../../constants/numbers';
+import { MONTH_IN_MILLISECONDS, YEAR_IN_MILLISECONDS } from '../../constants/numbers';
+import { BedrockService } from '../../lib/aws/bedrock/bedrock.service';
+import { MercadoLibreService } from '../../lib/mercado-libre/mercado-libre.service';
+import { MetaService } from '../../lib/meta/meta.service';
+import { YapeService } from '../../lib/yape/yape.service';
+import { camelCaseToSnakeCase } from '../../utils/string';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-new-profile.dto';
 import { EvaluationAnalysisReport } from './financial-analysis.type';
+import { PROMPT } from './rules/prompt';
+import { RECOMMENDATIONS_BY_CATEGORY } from './rules/recommendation-rules';
 import {
   HIGH_RISK_THRESHOLD,
   MEDIUM_RISK_THRESHOLD,
@@ -32,80 +40,16 @@ import {
 export class FinancialAnalysisService {
   private logger = new Logger(FinancialAnalysisService.name);
 
-  constructor(private prismaService: PrismaService) {}
+  constructor(
+    private prismaService: PrismaService,
+    private bedrockService: BedrockService,
+    private yapeService: YapeService,
+    private mercadoLibreService: MercadoLibreService,
+    private metaService: MetaService,
+  ) {}
 
-  async calculateScoreByUser(userId: number, creditType: CreditType) {
-    // 1. Get user to calculate score
-    const user = await this.prismaService.user.findFirstOrThrow({
-      where: {
-        id: userId,
-      },
-    });
-
-    // 2. Check if the user has a credit evaluation
-    const lastCreditEvaluation = await this.prismaService.creditEvaluation.findFirst({
-      where: {
-        userId: user.id,
-      },
-      orderBy: {
-        evaluationDate: 'desc',
-      },
-    });
-
-    // 3. If has no evaluations proceed to calculate
-    if (!lastCreditEvaluation) {
-      this.logger.log(`User with id ${user.id} has no evaluations, proceeding to calculate...`);
-    }
-
-    // 4. If their last evaluation was done more than the allowed period ago
-    if (lastCreditEvaluation && this.metWithTimeToReevaluate(lastCreditEvaluation.evaluationDate)) {
-      const diffInDays = DateTime.fromISO(String(lastCreditEvaluation.evaluationDate)).diff(
-        DateTime.fromISO(this.allowedTimeToReevaluateStartDate().toISOString()),
-        'days',
-      ).days;
-
-      // Return a message indicating that it's too early to reevaluate, try in X days
-      return { reason: `Please review your evaluation in ${diffInDays} more` };
-    }
-
-    // 6. Proceed to evaluate
-    const report = await this.evaluateCreditByUser(user, creditType);
-
-    if (!report) {
-      return { reason: 'Too few transactions until now' };
-    }
-
-    const {
-      score,
-      reliabilityScore,
-      riskLevel,
-      status,
-      avgMonthlyExpense,
-      avgMonthlyIncome,
-      totalTransactionExpensesAmount,
-      totalTransactionIncomingAmount,
-      totalTransactions,
-      debtRatio,
-    } = report.transactionsReport;
-
-    await this.prismaService.creditEvaluation.create({
-      data: {
-        creditType: CreditType.MORTGAGE,
-        riskLevel,
-        score,
-        status,
-        avgMonthlyExpense,
-        avgMonthlyIncome,
-        totalTransactions,
-        totalExpenses: totalTransactionExpensesAmount,
-        totalIncome: totalTransactionIncomingAmount,
-        debtRatio,
-        reliabilityScore,
-        userId: report.userId,
-      },
-    });
-
-    return report;
+  qualifiesForCategory(score: number, maxScore: number, threshold: number = 0.9): boolean {
+    return score >= maxScore * threshold;
   }
 
   allowedTimeToReevaluateStartDate() {
@@ -123,13 +67,16 @@ export class FinancialAnalysisService {
     user: User,
     creditType: CreditType,
   ): Promise<EvaluationAnalysisReport | null> {
+    const now = new Date();
     // Obtain all transactions made from 3 months ago
     const transactions = await this.prismaService.transaction.findMany({
       where: {
         userId: user.id,
         createdAt: {
           // We consider 3 months of transactions to consider it valid
-          gte: new Date(new Date().getTime() - TRANSACTION_EVALUATION_PERIOD_MONTHS),
+          gte: new Date(
+            now.getTime() - TRANSACTION_EVALUATION_PERIOD_MONTHS * MONTH_IN_MILLISECONDS,
+          ),
         },
       },
       orderBy: {
@@ -139,7 +86,7 @@ export class FinancialAnalysisService {
 
     // Verify if met with min transactions
     const hasMinimumTransactionsToProceed =
-      transactions.length > MIN_TRANSACTIONS_SINCE_LAST_EVALUATION;
+      transactions.length >= MIN_TRANSACTIONS_SINCE_LAST_EVALUATION;
 
     if (!hasMinimumTransactionsToProceed) {
       return null;
@@ -377,7 +324,167 @@ export class FinancialAnalysisService {
     });
   }
 
-  async getRecommendationsForUser() {}
+  getRecommendationsForUser(category: CreditEvaluationCategory): string[] {
+    // !NOTE: We're using recommendations previously generated with Claude haiku based on user's data
+    return RECOMMENDATIONS_BY_CATEGORY[category];
+  }
 
-  async uploadFilesForProcessing() {}
+  parseTransactionsFromText(text: string) {
+    const expensePatterns = {
+      RENT: /alquiler|renta|departamento/i,
+      WATER: /agua/i,
+      ELECTRICITY: /luz|electricidad|enel|pluz/i,
+      TELEPHONY: /teléfono|movistar|claro|bitel|entel/i,
+      INTERNET: /internet/i,
+      COLLEGE: /colegio/i,
+      CERTIFICATIONS: /certificación|curso/i,
+      UNIVERSITY: /universidad/i,
+      ONLINE_SHOPPING: /amazon|mercado libre|ebay/i,
+      SALARY: /salario|pago nómina/i,
+    };
+
+    const transactions = text
+      .split('\n')
+      .map((line) => {
+        const match = Object.entries(expensePatterns).find(([type, regex]) => regex.test(line));
+        if (match) {
+          const amountMatch = line.match(/(\d+(\.\d{2})?)/);
+          const amount = amountMatch ? parseFloat(amountMatch[0]) : 0;
+          return { category: match[0] as CreditEvaluationCategory, amount };
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    return transactions;
+  }
+
+  async processUserCreditEvaluation(userId: number, creditType: CreditType, imageBase64?: string) {
+    // 1. Get user to calculate score
+    const user = await this.prismaService.user.findFirstOrThrow({
+      where: {
+        id: userId,
+      },
+    });
+
+    // 2. Check if the user has a credit evaluation
+    const lastCreditEvaluation = await this.prismaService.creditEvaluation.findFirst({
+      where: {
+        userId: user.id,
+      },
+      orderBy: {
+        evaluationDate: 'desc',
+      },
+    });
+
+    // 3. If has no evaluations proceed to calculate
+    if (!lastCreditEvaluation) {
+      this.logger.log(`User with id ${user.id} has no evaluations, proceeding to calculate...`);
+    }
+
+    // 4. If their last evaluation was done more than the allowed period ago
+    if (lastCreditEvaluation && this.metWithTimeToReevaluate(lastCreditEvaluation.evaluationDate)) {
+      const diffInDays = DateTime.fromISO(String(lastCreditEvaluation.evaluationDate)).diff(
+        DateTime.fromISO(this.allowedTimeToReevaluateStartDate().toISOString()),
+        'days',
+      ).days;
+
+      // Return a message indicating that it's too early to reevaluate, try in X days
+      return { reason: `Please review your evaluation in ${diffInDays} more` };
+    }
+
+    const transactionPromises: Promise<Partial<Transaction>[]>[] = [];
+
+    // 5. Analyze image if user sent any
+    if (imageBase64) {
+      const extractedText = await this.bedrockService.invokeModelWith(PROMPT, imageBase64);
+      const [{ text }] = extractedText.content;
+      const transactions = JSON.parse(text) as Transaction[];
+
+      transactionPromises.push(
+        this.prismaService.transaction.createManyAndReturn({
+          data: transactions.map((transaction) => ({
+            amount: transaction.amount,
+            currency: transaction.currency,
+            transactionType: transaction.transactionType,
+            category: transaction.category,
+            merchantName: transaction.merchantName,
+            paymentMethod: transaction.paymentMethod,
+            source: transaction.source,
+            location: transaction.location,
+            metadata: transaction.metadata,
+            invoiceNumber: transaction.invoiceNumber,
+            userId: user.id,
+          })),
+        }),
+      );
+    }
+
+    // 6. Evaluate other sources to get transactions
+    transactionPromises.push(this.yapeService.getTransactions(userId));
+    transactionPromises.push(this.mercadoLibreService.getTransactions(userId));
+    transactionPromises.push(this.metaService.getTransactions(userId));
+
+    // Wait for all transactions to complete
+    await Promise.all(transactionPromises);
+
+    // 7. Proceed to evaluate
+    const report = await this.evaluateCreditByUser(user, creditType);
+
+    if (!report) {
+      return { reason: 'Too few transactions until now' };
+    }
+
+    const {
+      score,
+      reliabilityScore,
+      riskLevel,
+      status,
+      avgMonthlyExpense,
+      avgMonthlyIncome,
+      totalTransactionExpensesAmount,
+      totalTransactionIncomingAmount,
+      totalTransactions,
+      debtRatio,
+    } = report.transactionsReport;
+
+    const categoriesWithRecommendations = {};
+
+    for (const category in report.scoreByCategory) {
+      const calculatedCategoryScore = report.scoreByCategory[category];
+
+      const formattedCategory = camelCaseToSnakeCase(
+        category,
+      ).toUpperCase() as CreditEvaluationCategory;
+
+      categoriesWithRecommendations[category] = {
+        score: calculatedCategoryScore * 1000,
+        qualify: this.qualifiesForCategory(
+          calculatedCategoryScore,
+          SCORE_BY_CATEGORY[formattedCategory],
+        ),
+        recommendations: this.getRecommendationsForUser(formattedCategory),
+      };
+    }
+
+    await this.prismaService.creditEvaluation.create({
+      data: {
+        creditType: CreditType.MORTGAGE,
+        riskLevel,
+        score,
+        status,
+        avgMonthlyExpense,
+        avgMonthlyIncome,
+        totalTransactions,
+        totalExpenses: totalTransactionExpensesAmount,
+        totalIncome: totalTransactionIncomingAmount,
+        debtRatio,
+        reliabilityScore,
+        userId: report.userId,
+        metadata: categoriesWithRecommendations,
+      },
+    });
+
+    return categoriesWithRecommendations;
+  }
 }

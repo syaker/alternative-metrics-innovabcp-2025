@@ -11,6 +11,7 @@ import { YapeModule } from './lib/yape/yape.module';
 import { FinancialAnalysisModule } from './modules/financial-analysis/financial-analysis.module';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { VersionModule } from './modules/version/version.module';
+import { AwsModule } from './lib/aws/aws.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { VersionModule } from './modules/version/version.module';
     SwaggerModule,
     VersionModule,
     TasksModule,
+    AwsModule,
   ],
   providers: [AppService],
 })

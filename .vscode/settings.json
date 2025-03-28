@@ -14,7 +14,18 @@
   "[prisma]": {
     "editor.defaultFormatter": "Prisma.prisma"
   },
-  "cSpell.words": ["autoincrement", "innovabcp", "LOOKBACK", "luxon", "Yape"],
+  "cSpell.words": [
+    "adjúntala",
+    "autoincrement",
+    "innovabcp",
+    "LOOKBACK",
+    "luxon",
+    "montos",
+    "yape",
+    "Yape"
+  ],
+  "cSpell.language": "es, en",
+  "cSpell.dictionaries": ["es-es"],
   "[dotenv]": {
     "editor.defaultFormatter": "foxundermoon.shell-format"
   }

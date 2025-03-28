@@ -5,14 +5,14 @@ import { FinancialAnalysisService } from '../financial-analysis/financial-analys
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
-export class TaskService {
+export class TasksService {
   constructor(
     private financialAnalysisService: FinancialAnalysisService,
     private prismaService: PrismaService,
   ) {}
 
   // !NOTE Executing each 2 minutes for testing purposes
-  @Cron('*/2 * * * *')
+  @Cron('*/55 * * * *')
   async handleTask() {
     console.log('Executing scheduled task...');
 
@@ -28,10 +28,12 @@ export class TaskService {
       },
     });
 
+    const creditTypes = Object.values(CreditType);
+
+    console.log(`Evaluating ${creditTypes.join(', ')} for ${users.length} users`);
+
     await Promise.all(
       users.map(async (user) => {
-        const creditTypes = Object.values(CreditType);
-
         const evaluations = await Promise.all(
           creditTypes.map(async (creditType) =>
             this.financialAnalysisService.evaluateCreditByUser(user, creditType),
@@ -43,6 +45,8 @@ export class TaskService {
         if (validEvaluations.length === 0) {
           return;
         }
+
+        console.log(`Considering ${evaluations.length} for user with id ${user.id}`);
 
         await this.prismaService.creditEvaluation.createMany({
           data: validEvaluations.map((evaluation) => ({
